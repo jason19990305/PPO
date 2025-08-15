@@ -3,16 +3,16 @@ import numpy as np
 import argparse
 import time
 
-from Discrete_PPO.Agent import Agent
+from Continuous_PPO.Agent import Agent
 
 class main():
     def __init__(self , args):
         
-        env_name = 'CartPole-v1'
-        env = gym.make(env_name)
+        env_name = 'LunarLander-v3'
+        env = gym.make(env_name, continuous=True)
         
         args.num_states = env.observation_space.shape[0]
-        args.num_actions = env.action_space.n
+        args.num_actions = env.action_space.shape[0]
         # Pring hyperparameters 
         print("---------------")
         for arg in vars(args):

@@ -1,5 +1,9 @@
 import torch.nn as nn
 
+def orthogonal_init(layer, gain=1.0):
+    nn.init.orthogonal_(layer.weight, gain=gain)
+    nn.init.constant_(layer.bias, 0)
+    
 class Actor(nn.Module):
     def __init__(self, args, hidden_layers=[64, 64]):
         super(Actor, self).__init__()
@@ -18,6 +22,8 @@ class Actor(nn.Module):
             num_output = hidden_layers[i + 1]
             layer = nn.Linear(num_input, num_output)
             fc_list.append(layer)
+            orthogonal_init(fc_list[-1])
+        orthogonal_init(fc_list[-1], gain=0.01)
 
         # Convert list to ModuleList for proper registration
         self.layers = nn.ModuleList(fc_list)
@@ -45,16 +51,16 @@ class Critic(nn.Module):
         print(hidden_layers)
 
         # create layers
-        layer_list = []
+        fc_list = []
 
         for i in range(len(hidden_layers)-1):
             input_num = hidden_layers[i]
             output_num = hidden_layers[i+1]
-            layer = nn.Linear(input_num,output_num)
-            
-            layer_list.append(layer)
+            layer = nn.Linear(input_num,output_num)            
+            fc_list.append(layer)
+            orthogonal_init(fc_list[-1])
         # put in ModuleList
-        self.layers = nn.ModuleList(layer_list)
+        self.layers = nn.ModuleList(fc_list)
         self.tanh = nn.Tanh()
 
     def forward(self,x):

@@ -8,7 +8,7 @@ from Discrete_PPO.Agent import Agent
 class main():
     def __init__(self , args):
         
-        env_name = 'CartPole-v1'
+        env_name = 'LunarLander-v3'
         env = gym.make(env_name)
         
         args.num_states = env.observation_space.shape[0]
@@ -33,11 +33,10 @@ class main():
 if __name__ == '__main__':
     parser = argparse.ArgumentParser("Hyperparameters Setting for PPO")
     parser.add_argument("--evaluate_freq_steps", type=float, default=2e3, help="Evaluate the policy every 'evaluate_freq' steps")
-    parser.add_argument("--mini_batch_size", type=int, default=32, help="Mini-batch size for training")
+    parser.add_argument("--mini_batch_size", type=int, default=16, help="Mini-batch size for training")
     parser.add_argument("--max_train_steps", type=int, default=1e5, help="Set the number of steps used for training the agent")    
     parser.add_argument("--batch_size", type=int, default=512, help="Batch size")
     parser.add_argument("--entropy_coef", type=float, default=0.01, help="Entropy coefficient for actor loss")
-    parser.add_argument("--continuous", type=bool, default=False, help="Whether the action space is continuous or discrete")
     parser.add_argument("--epochs", type=int, default=50, help="PPO training iteration parameter")
     parser.add_argument("--epsilon", type=float, default=0.2, help="PPO clip parameter")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor")

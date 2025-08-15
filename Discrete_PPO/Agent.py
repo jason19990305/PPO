@@ -1,5 +1,5 @@
-from PPO.ReplayBuffer import ReplayBuffer
-from PPO.ActorCritic import Actor,Critic
+from Discrete_PPO.ReplayBuffer import ReplayBuffer
+from Discrete_PPO.ActorCritic import Actor,Critic
 import numpy as np
 import copy
 import torch
@@ -16,10 +16,12 @@ class Agent():
         self.mini_batch_size = args.mini_batch_size
         self.num_actions = args.num_actions
         self.num_states = args.num_states
+        self.entropy_coef = args.entropy_coef
         self.batch_size = args.batch_size
         self.epsilon = args.epsilon
         self.epochs = args.epochs        
         self.gamma = args.gamma
+        self.lamda = args.lamda
         self.lr = args.lr     
         
         # Variable
@@ -110,7 +112,21 @@ class Agent():
         plt.ylabel("Reward")
         plt.title("Training Curve")
         plt.show()
-        
+    def GAE(self,vs,vs_,r,done):
+        adv = []
+        gae = 0
+        with torch.no_grad():  # adv and v_target have no gradient
+            
+            deltas = r + self.gamma * (1.0 - done) * vs_ - vs
+            for delta, d in zip(reversed(deltas.flatten().numpy()), reversed(done.flatten().numpy())):
+                gae = delta + self.gamma * self.lamda * gae# * (1.0 - d)
+                adv.insert(0, gae)
+            adv = torch.tensor(adv, dtype=torch.float).view(-1, 1)
+            v_target = adv + vs
+            # advantage normalization
+            adv = ((adv - adv.mean()) / (adv.std() + 1e-5))
+        return v_target,adv
+    
     def update(self):
         s, a, r, s_, done = self.replay_buffer.numpy_to_tensor()
         
@@ -123,10 +139,10 @@ class Agent():
             value = self.critic(s)    
             # next value        
             next_value = self.critic(s_)
-            # TD-Error
-            target_value = r + self.gamma * next_value * (1 - done)
-            # baseline advantage
-            adv = target_value - value 
+            target_value , adv = self.GAE(value, next_value, r, done)
+            # advantage normalization
+            adv = ((adv - adv.mean()) / (adv.std() + 1e-8)) 
+           
             # Calculate old log probability old p_\theta(a|s)
             old_prob = self.actor(s).gather(dim=1, index=a)  # Get action probability from the model
             old_log_prob = torch.log(old_prob + 1e-10)  # Add small value to avoid log(0)
@@ -141,13 +157,15 @@ class Agent():
                 # Update Actor
                 new_prob = self.actor(s[index]).gather(dim=1, index=a[index])  # Get action probability from the model
                 log_prob = torch.log(new_prob + 1e-10)  # Add small value to avoid log(0)
+                prob_entropy = -(new_prob * log_prob).mean() # get entropy of actor distribution
                 ratio = torch.exp(log_prob - old_log_prob[index])  # Calculate the ratio of new and old probabilities                
                 p1 = ratio * adv[index]
                 p2 = torch.clamp(ratio, 1 - self.epsilon, 1 + self.epsilon) * adv[index]
                 actor_loss = -torch.min(p1, p2)  # Calculate loss
-                actor_loss = actor_loss.mean()  # Mean loss over the batch
+                actor_loss = actor_loss.mean() - prob_entropy * self.entropy_coef # Mean loss over the batch
                 self.optimizer_actor.zero_grad()
                 actor_loss.backward()  # Backpropagation
+                torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 0.5)
                 self.optimizer_actor.step()
                 
                 # Update Critic
@@ -155,9 +173,17 @@ class Agent():
                 critic_loss = F.mse_loss(value, target_value[index])  # Mean Squared Error loss
                 self.optimizer_critic.zero_grad()
                 critic_loss.backward()  # Backpropagation
+                torch.nn.utils.clip_grad_norm_(self.critic.parameters(), 0.5)
                 self.optimizer_critic.step()
+        self.lr_decay(self.total_steps)  # Learning rate decay
         
-        
+    def lr_decay(self, total_steps):
+        lr_a_now = self.lr * (1 - total_steps / self.max_train_steps)
+        lr_c_now = self.lr * (1 - total_steps / self.max_train_steps)
+        for opt in self.optimizer_actor.param_groups:
+            opt['lr'] = lr_a_now
+        for opt in self.optimizer_critic.param_groups:
+            opt['lr'] = lr_c_now
         
     def evaluate(self , env):
         times = 10
