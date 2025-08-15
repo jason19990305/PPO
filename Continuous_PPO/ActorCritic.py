@@ -29,7 +29,7 @@ class Actor(nn.Module):
 
         # Convert list to ModuleList for proper registration
         self.layers = nn.ModuleList(fc_list)
-        self.std = nn.Parameter(torch.zeros(1,self.num_actions) + 1.5)   
+        self.log_std = nn.Parameter(torch.zeros(1, self.num_actions))
         self.tanh = nn.Tanh()
         
     def forward(self, x):
@@ -40,8 +40,7 @@ class Actor(nn.Module):
     
     def get_dist(self,state):
         mean = self.forward(state)
-        log_std = self.std.expand_as(mean)
-        std = torch.exp(log_std) + 0.1
+        std = torch.exp(self.log_std.expand_as(mean))
         try:
             dist = Normal(mean,std)
         except Exception as e:

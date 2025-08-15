@@ -1,5 +1,6 @@
 from Continuous_PPO.ReplayBuffer import ReplayBuffer
 from Continuous_PPO.ActorCritic import Actor,Critic
+from Continuous_PPO.Normalization import Normalization
 import numpy as np
 import copy
 import torch
@@ -35,6 +36,7 @@ class Agent():
         self.env = env
         self.env_eval = copy.deepcopy(env)
         self.replay_buffer = ReplayBuffer(args)
+        self.state_norm = Normalization(shape=self.num_states)
         
         
         # The model interacts with the environment and gets updated continuously
@@ -55,8 +57,9 @@ class Agent():
             dist = self.actor.get_dist(s)
             a = dist.sample()
             a = torch.clamp(a, -1, 1)  # Ensure action is within bounds
+            log_prob = dist.log_prob(a)
             
-        return a.numpy().flatten()
+        return a.numpy().flatten() , log_prob.numpy().flatten()
 
     def evaluate_action(self, state):
         state = torch.tensor(state, dtype=torch.float)
@@ -77,15 +80,17 @@ class Agent():
         while self.total_steps < self.max_train_steps:
             # reset environment
             s, info = self.env.reset()
+            s = self.state_norm(s)
 
             while True:                
-                a = self.choose_action(s)
+                a , log_prob= self.choose_action(s)
                 # interact with environment
                 action = a * self.env.action_space.high[0]
-                s_ , r , done, truncated, _ = self.env.step(a)   
-                truncated = truncated or done
+                s_ , r , done, truncated, _ = self.env.step(action)   
+                s_ = self.state_norm(s_)
+
                 # stoare transition in replay buffer
-                self.replay_buffer.store(s, a, [r], s_, [done] , [truncated])
+                self.replay_buffer.store(s, a, log_prob, [r], s_, [done] , [truncated | done])
                 # update state
                 s = s_
                 
@@ -135,29 +140,27 @@ class Agent():
         return v_target , adv
     
     def update(self):
-        s, a, r, s_, done , truncated = self.replay_buffer.numpy_to_tensor()
+        s, a, old_log_prob , r, s_, done , truncated = self.replay_buffer.numpy_to_tensor()
         
-        print(torch.exp(self.actor.std))
 
         # get target value and advantage
+        #print(done)
+        #print(truncated)
+        print(self.actor.log_std)
         
         with torch.no_grad():
             # current value
             value = self.critic(s)    
             # next value        
             next_value = self.critic(s_)
-            #target_value , adv = self.GAE(value, next_value, r, done , truncated)
-            target_value = r + self.gamma * next_value * (1.0 - done)  # TD target
-            adv = target_value - value
-            adv = ((adv - adv.mean()) / (adv.std() + 1e-8)) 
+            target_value , adv = self.GAE(value, next_value, r, done , truncated)
+            #target_value = r + self.gamma * next_value * (1.0 - truncated)  # TD target
+            #adv = target_value - value
+            #adv = ((adv - adv.mean()) / (adv.std() + 1e-8)) 
 
-            # Calculate old log probability old p_\theta(a|s)
-            old_dist = self.actor.get_dist(s)
-            old_log_prob = old_dist.log_prob(a)
        
         
         
-        print("------------")
         for i in range(self.epochs):
             for j in range(self.batch_size//self.mini_batch_size):
                 index = np.random.choice(self.batch_size, self.mini_batch_size, replace=False)
@@ -166,19 +169,24 @@ class Agent():
                 # Get action probability from the model
                 dist = self.actor.get_dist(s[index])
                 # get entropy of actor distribution
-                prob_entropy = dist.entropy().sum(dim=1, keepdim=True)      
+                prob_entropy = dist.entropy().sum(dim=1, keepdim=True)   
                 
                 # Get log probability
                 log_prob = dist.log_prob(a[index])
-                
+                 
+
                 # Calculate the ratio of new and old probabilities   
-                ratio = torch.exp(log_prob.sum(dim = 1, keepdim=True) - old_log_prob[index].sum(dim = 1, keepdim=True))     
+                ratio = torch.exp(log_prob.sum(dim = 1, keepdim=True) - old_log_prob[index].sum(dim = 1, keepdim=True))    
+                  
                 p1 = ratio * adv[index]
+                 
                 p2 = torch.clamp(ratio, 1 - self.epsilon, 1 + self.epsilon) * adv[index]
+                
                 # Calculate loss
-                actor_loss = - torch.min(p1, p2) - prob_entropy * self.entropy_coef 
+                actor_loss = torch.min(p1, p2) - prob_entropy * self.entropy_coef 
+                
                 # Mean actor loss and add entropy term
-                actor_loss = actor_loss.mean()
+                actor_loss = -actor_loss.mean()
                 self.optimizer_actor.zero_grad()
                 actor_loss.backward()  # Backpropagation
                 # Gradient clipping
@@ -210,10 +218,14 @@ class Agent():
         
         for i in range(times):
             s , info = env.reset()
+            s = self.state_norm(s, update=False)
             episode_reward = 0
             while True:
                 a = self.evaluate_action(s)  # We use the deterministic policy during the evaluating
-                s_, r, done, truncted, _ = env.step(a * self.env.action_space.high[0])
+                action = a * self.env.action_space.high[0]
+                s_, r, done, truncted, _ = env.step(action)
+                s_ = self.state_norm(s_, update=False)
+
                
                 episode_reward += r
                 s = s_
