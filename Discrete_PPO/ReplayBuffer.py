@@ -11,14 +11,16 @@ class ReplayBuffer:
         self.r = []
         self.s_ = []
         self.done = []
+        self.truncated = []
         self.count = 0
         
-    def store(self, s, a , r, s_, done):
+    def store(self, s, a , r, s_, done , truncated):
         self.s.append(s)
         self.a.append(a)
         self.r.append(r)
         self.s_.append(s_)
         self.done.append(done)
+        self.truncated.append(truncated)
         self.count += 1
         
     def numpy_to_tensor(self):
@@ -27,6 +29,7 @@ class ReplayBuffer:
         r = torch.tensor(np.array(self.r), dtype=torch.float)
         s_ = torch.tensor(np.array(self.s_), dtype=torch.float)
         done = torch.tensor(np.array(self.done), dtype=torch.float)
+        truncated = torch.tensor(np.array(self.truncated), dtype=torch.float)
         self.clear_batch()
 
-        return s, a, r, s_, done
+        return s, a, r, s_, done , truncated

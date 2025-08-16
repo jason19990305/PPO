@@ -24,6 +24,7 @@ class Agent():
         self.epochs = args.epochs        
         self.gamma = args.gamma
         self.lamda = args.lamda
+        self.gae = args.gae
         self.lr = args.lr     
         
         # Variable
@@ -135,8 +136,7 @@ class Agent():
                 adv.insert(0, gae)
             adv = torch.tensor(adv, dtype=torch.float).view(-1, 1)
             v_target = adv + vs
-            # advantage normalization
-            adv = ((adv - adv.mean()) / (adv.std() + 1e-5))
+            
         return v_target , adv
     
     def update(self):
@@ -146,18 +146,21 @@ class Agent():
         # get target value and advantage
         #print(done)
         #print(truncated)
-        print(self.actor.log_std)
+        print(torch.exp(self.actor.log_std))
         
         with torch.no_grad():
             # current value
             value = self.critic(s)    
             # next value        
             next_value = self.critic(s_)
-            target_value , adv = self.GAE(value, next_value, r, done , truncated)
-            #target_value = r + self.gamma * next_value * (1.0 - truncated)  # TD target
-            #adv = target_value - value
-            #adv = ((adv - adv.mean()) / (adv.std() + 1e-8)) 
-
+            if self.gae:
+                # Use GAE for advantage estimation
+                target_value , adv = self.GAE(value, next_value, r, done , truncated)
+            else :                 
+                target_value = r + self.gamma * next_value * (1.0 - done)  # TD target
+                adv = target_value - value
+            # advantage normalization
+            adv = ((adv - adv.mean()) / (adv.std() + 1e-8))
        
         
         
@@ -173,14 +176,14 @@ class Agent():
                 
                 # Get log probability
                 log_prob = dist.log_prob(a[index])
-                 
-
                 # Calculate the ratio of new and old probabilities   
                 ratio = torch.exp(log_prob.sum(dim = 1, keepdim=True) - old_log_prob[index].sum(dim = 1, keepdim=True))    
                   
                 p1 = ratio * adv[index]
                  
                 p2 = torch.clamp(ratio, 1 - self.epsilon, 1 + self.epsilon) * adv[index]
+                #print(p1)
+                #print(p2)
                 
                 # Calculate loss
                 actor_loss = torch.min(p1, p2) - prob_entropy * self.entropy_coef 

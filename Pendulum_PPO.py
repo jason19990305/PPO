@@ -42,6 +42,7 @@ if __name__ == '__main__':
     parser.add_argument("--epsilon", type=float, default=0.18, help="PPO clip parameter")
     parser.add_argument("--gamma", type=float, default=0.999, help="Discount factor")
     parser.add_argument("--lamda", type=float, default=0.95, help="GAE parameter")
+    parser.add_argument("--gae", type=bool, default=False, help="Use GAE for advantage estimation")
     parser.add_argument("--lr", type=float, default=0.0003, help="Learning rate for optimizer")
     
 

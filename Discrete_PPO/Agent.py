@@ -1,5 +1,6 @@
 from Discrete_PPO.ReplayBuffer import ReplayBuffer
 from Discrete_PPO.ActorCritic import Actor,Critic
+from Discrete_PPO.Normalization import Normalization
 import numpy as np
 import copy
 import torch
@@ -16,10 +17,11 @@ class Agent():
         self.mini_batch_size = args.mini_batch_size
         self.num_actions = args.num_actions
         self.num_states = args.num_states
-        self.entropy_coef = args.entropy_coef
-        self.batch_size = args.batch_size
+        self.use_state_norm = args.use_state_norm
+        self.entropy_coef = args.entropy_coef        
+        self.batch_size = args.batch_size        
         self.epsilon = args.epsilon
-        self.epochs = args.epochs        
+        self.epochs = args.epochs                
         self.gamma = args.gamma
         self.lamda = args.lamda
         self.lr = args.lr     
@@ -34,7 +36,8 @@ class Agent():
         self.env = env
         self.env_eval = copy.deepcopy(env)
         self.replay_buffer = ReplayBuffer(args)
-        
+        self.state_norm = Normalization(shape=self.num_states)
+
         
         # The model interacts with the environment and gets updated continuously
         self.actor = Actor(args , hidden_layer_list.copy())
@@ -72,14 +75,19 @@ class Agent():
         while self.total_steps < self.max_train_steps:
             # reset environment
             s, info = self.env.reset()
+            if self.use_state_norm:
+                s = self.state_norm(s)
 
             while True:                
                 a = self.choose_action(s)
                 # interact with environment
                 s_ , r , done, truncated, _ = self.env.step(a)   
+                if self.use_state_norm:
+                    s_ = self.state_norm(s_)
+                
                 done = done or truncated
                 # stoare transition in replay buffer
-                self.replay_buffer.store(s, a, [r], s_, [done])
+                self.replay_buffer.store(s, a, [r], s_, [done] , [truncated | done])
                 # update state
                 s = s_
                 
@@ -123,8 +131,7 @@ class Agent():
                 adv.insert(0, gae)
             adv = torch.tensor(adv, dtype=torch.float).view(-1, 1)
             v_target = adv + vs
-            # advantage normalization
-            adv = ((adv - adv.mean()) / (adv.std() + 1e-5))
+            
         return v_target,adv
     
     def update(self):
@@ -140,6 +147,14 @@ class Agent():
             # next value        
             next_value = self.critic(s_)
             target_value , adv = self.GAE(value, next_value, r, done)
+            
+            if self.gae:
+                # Use GAE for advantage estimation
+                target_value , adv = self.GAE(value, next_value, r, done , truncated)
+            else :                 
+                target_value = r + self.gamma * next_value * (1.0 - done)  # TD target
+                adv = target_value - value
+                
             # advantage normalization
             adv = ((adv - adv.mean()) / (adv.std() + 1e-8)) 
            
@@ -191,11 +206,15 @@ class Agent():
         
         for i in range(times):
             s , info = env.reset()
+            if self.use_state_norm:
+                s = self.state_norm(s, update=False)
+
             episode_reward = 0
             while True:
                 a = self.evaluate_action(s)  # We use the deterministic policy during the evaluating
                 s_, r, done, truncted, _ = env.step(a)
-
+                if self.use_state_norm:
+                    s_ = self.state_norm(s_, update=False)
                
                 episode_reward += r
                 s = s_
