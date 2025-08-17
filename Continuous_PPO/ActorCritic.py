@@ -45,6 +45,7 @@ class Actor(nn.Module):
             dist = Normal(mean,std)
         except Exception as e:
             for param in self.parameters():
+                print("Actor output out of range, check the input state or model parameters.")
                 print("actor parameter:",param.data)
             
         return dist

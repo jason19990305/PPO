@@ -15,10 +15,10 @@ class Agent():
         self.max_train_steps = args.max_train_steps
         self.evaluate_freq_steps = args.evaluate_freq_steps
         self.mini_batch_size = args.mini_batch_size
+        self.use_state_norm = args.use_state_norm
         self.num_actions = args.num_actions
         self.num_states = args.num_states
         self.entropy_coef = args.entropy_coef
-        self.continuous = args.continuous
         self.batch_size = args.batch_size
         self.epsilon = args.epsilon
         self.epochs = args.epochs        
@@ -38,6 +38,7 @@ class Agent():
         self.env_eval = copy.deepcopy(env)
         self.replay_buffer = ReplayBuffer(args)
         self.state_norm = Normalization(shape=self.num_states)
+        self.state_norm_target = Normalization(shape=self.num_states)
         
         
         # The model interacts with the environment and gets updated continuously
@@ -81,14 +82,18 @@ class Agent():
         while self.total_steps < self.max_train_steps:
             # reset environment
             s, info = self.env.reset()
-            s = self.state_norm(s)
+            if self.use_state_norm:
+                self.state_norm(copy.deepcopy(s) , update = True) # update state normalization
+                s = self.state_norm_target(s , update=False) # get normalized state
 
             while True:                
                 a , log_prob= self.choose_action(s)
                 # interact with environment
                 action = a * self.env.action_space.high[0]
                 s_ , r , done, truncated, _ = self.env.step(action)   
-                s_ = self.state_norm(s_)
+                if self.use_state_norm:
+                    self.state_norm(copy.deepcopy(s_) , update = True) # update state normalization
+                    s_ = self.state_norm_target(s_ , update=False) # get normalized state
 
                 # stoare transition in replay buffer
                 self.replay_buffer.store(s, a, log_prob, [r], s_, [done] , [truncated | done])
@@ -143,9 +148,6 @@ class Agent():
         s, a, old_log_prob , r, s_, done , truncated = self.replay_buffer.numpy_to_tensor()
         
 
-        # get target value and advantage
-        #print(done)
-        #print(truncated)
         print(torch.exp(self.actor.log_std))
         
         with torch.no_grad():
@@ -153,6 +155,7 @@ class Agent():
             value = self.critic(s)    
             # next value        
             next_value = self.critic(s_)
+            
             if self.gae:
                 # Use GAE for advantage estimation
                 target_value , adv = self.GAE(value, next_value, r, done , truncated)
@@ -177,6 +180,7 @@ class Agent():
                 # Get log probability
                 log_prob = dist.log_prob(a[index])
                 # Calculate the ratio of new and old probabilities   
+                
                 ratio = torch.exp(log_prob.sum(dim = 1, keepdim=True) - old_log_prob[index].sum(dim = 1, keepdim=True))    
                   
                 p1 = ratio * adv[index]
@@ -206,7 +210,13 @@ class Agent():
                 self.optimizer_critic.step()
                 
         self.lr_decay(self.total_steps)  # Learning rate decay
+        self.update_normalization()
         
+    def update_normalization(self):
+        if self.use_state_norm:
+            self.state_norm_target.running_ms.mean = self.state_norm.running_ms.mean
+            self.state_norm_target.running_ms.std = self.state_norm.running_ms.std
+            
     def lr_decay(self, total_steps):
         lr_a_now = self.lr * (1 - total_steps / self.max_train_steps)
         lr_c_now = self.lr * (1 - total_steps / self.max_train_steps)
@@ -221,13 +231,15 @@ class Agent():
         
         for i in range(times):
             s , info = env.reset()
-            s = self.state_norm(s, update=False)
+            if self.use_state_norm:
+                s = self.state_norm_target(s , update=False)
             episode_reward = 0
             while True:
                 a = self.evaluate_action(s)  # We use the deterministic policy during the evaluating
                 action = a * self.env.action_space.high[0]
                 s_, r, done, truncted, _ = env.step(action)
-                s_ = self.state_norm(s_, update=False)
+                if self.use_state_norm:
+                    s_ = self.state_norm_target(s_ , update=False)
 
                
                 episode_reward += r

@@ -15,15 +15,16 @@ class Agent():
         self.max_train_steps = args.max_train_steps
         self.evaluate_freq_steps = args.evaluate_freq_steps
         self.mini_batch_size = args.mini_batch_size
+        self.use_state_norm = args.use_state_norm
         self.num_actions = args.num_actions
         self.num_states = args.num_states
-        self.use_state_norm = args.use_state_norm
         self.entropy_coef = args.entropy_coef        
         self.batch_size = args.batch_size        
         self.epsilon = args.epsilon
         self.epochs = args.epochs                
         self.gamma = args.gamma
         self.lamda = args.lamda
+        self.gae = args.gae
         self.lr = args.lr     
         
         # Variable
@@ -37,6 +38,7 @@ class Agent():
         self.env_eval = copy.deepcopy(env)
         self.replay_buffer = ReplayBuffer(args)
         self.state_norm = Normalization(shape=self.num_states)
+        self.state_norm_target = Normalization(shape=self.num_states)
 
         
         # The model interacts with the environment and gets updated continuously
@@ -56,7 +58,9 @@ class Agent():
             s = torch.unsqueeze(state, dim=0)
             action_probability = self.actor(s).numpy().flatten()
             action = np.random.choice(self.num_actions, p=action_probability)
-        return action
+            log_prob = np.log(action_probability[action] + 1e-10)  # Add small value to avoid log(0)
+            
+        return action , log_prob
 
     def evaluate_action(self, state):
         state = torch.tensor(state, dtype=torch.float)
@@ -71,23 +75,26 @@ class Agent():
         epoch_reward_list = []
         epoch_count_list = []
         epoch_count = 0
+        
         # Training loop
         while self.total_steps < self.max_train_steps:
             # reset environment
             s, info = self.env.reset()
             if self.use_state_norm:
-                s = self.state_norm(s)
+                self.state_norm(copy.deepcopy(s) , update = True) # update state normalization
+                s = self.state_norm_target(s , update=False) # get normalized state
 
             while True:                
-                a = self.choose_action(s)
+                a , log_prob = self.choose_action(s)
                 # interact with environment
                 s_ , r , done, truncated, _ = self.env.step(a)   
                 if self.use_state_norm:
-                    s_ = self.state_norm(s_)
+                    self.state_norm(copy.deepcopy(s_) , update = True) # update state normalization
+                    s_ = self.state_norm_target(s_ , update=False) # get normalized state
                 
                 done = done or truncated
                 # stoare transition in replay buffer
-                self.replay_buffer.store(s, a, [r], s_, [done] , [truncated | done])
+                self.replay_buffer.store(s, a , log_prob, [r], s_, [done] , [truncated | done])
                 # update state
                 s = s_
                 
@@ -120,33 +127,33 @@ class Agent():
         plt.ylabel("Reward")
         plt.title("Training Curve")
         plt.show()
-    def GAE(self,vs,vs_,r,done):
+        
+    def GAE(self,vs,vs_,r,done , truncated):
         adv = []
         gae = 0
         with torch.no_grad():  # adv and v_target have no gradient
             
             deltas = r + self.gamma * (1.0 - done) * vs_ - vs
-            for delta, d in zip(reversed(deltas.flatten().numpy()), reversed(done.flatten().numpy())):
-                gae = delta + self.gamma * self.lamda * gae# * (1.0 - d)
+            for delta, d in zip(reversed(deltas.flatten().numpy()), reversed(truncated.flatten().numpy())):
+                gae = delta + self.gamma * self.lamda * gae * (1.0 - d)
                 adv.insert(0, gae)
             adv = torch.tensor(adv, dtype=torch.float).view(-1, 1)
             v_target = adv + vs
             
-        return v_target,adv
+        return v_target , adv
     
     def update(self):
-        s, a, r, s_, done = self.replay_buffer.numpy_to_tensor()
+        s, a , old_log_prob, r, s_, done , truncated = self.replay_buffer.numpy_to_tensor()
+        
         
         a = a.view(-1, 1)  # Reshape action from (N) -> (N, 1) for gathering
-        
-        # get target value and advantage
+        old_log_prob = old_log_prob.view(-1, 1)  # Reshape old_log_prob from (N) -> (N, 1) for gathering
         
         with torch.no_grad():
             # current value
             value = self.critic(s)    
             # next value        
             next_value = self.critic(s_)
-            target_value , adv = self.GAE(value, next_value, r, done)
             
             if self.gae:
                 # Use GAE for advantage estimation
@@ -155,12 +162,8 @@ class Agent():
                 target_value = r + self.gamma * next_value * (1.0 - done)  # TD target
                 adv = target_value - value
                 
-            # advantage normalization
+            # Advantage normalization
             adv = ((adv - adv.mean()) / (adv.std() + 1e-8)) 
-           
-            # Calculate old log probability old p_\theta(a|s)
-            old_prob = self.actor(s).gather(dim=1, index=a)  # Get action probability from the model
-            old_log_prob = torch.log(old_prob + 1e-10)  # Add small value to avoid log(0)
        
         
         
@@ -176,8 +179,8 @@ class Agent():
                 ratio = torch.exp(log_prob - old_log_prob[index])  # Calculate the ratio of new and old probabilities                
                 p1 = ratio * adv[index]
                 p2 = torch.clamp(ratio, 1 - self.epsilon, 1 + self.epsilon) * adv[index]
-                actor_loss = -torch.min(p1, p2)  # Calculate loss
-                actor_loss = actor_loss.mean() - prob_entropy * self.entropy_coef # Mean loss over the batch
+                actor_loss = torch.min(p1, p2)  - prob_entropy * self.entropy_coef # Mean loss over the batch
+                actor_loss = -actor_loss.mean()
                 self.optimizer_actor.zero_grad()
                 actor_loss.backward()  # Backpropagation
                 torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 0.5)
@@ -190,8 +193,15 @@ class Agent():
                 critic_loss.backward()  # Backpropagation
                 torch.nn.utils.clip_grad_norm_(self.critic.parameters(), 0.5)
                 self.optimizer_critic.step()
+                
         self.lr_decay(self.total_steps)  # Learning rate decay
+        self.update_normalization()
         
+    def update_normalization(self):
+        if self.use_state_norm:
+            self.state_norm_target.running_ms.mean = self.state_norm.running_ms.mean
+            self.state_norm_target.running_ms.std = self.state_norm.running_ms.std
+            
     def lr_decay(self, total_steps):
         lr_a_now = self.lr * (1 - total_steps / self.max_train_steps)
         lr_c_now = self.lr * (1 - total_steps / self.max_train_steps)
@@ -207,14 +217,14 @@ class Agent():
         for i in range(times):
             s , info = env.reset()
             if self.use_state_norm:
-                s = self.state_norm(s, update=False)
+                s = self.state_norm_target(s , update=False)
 
             episode_reward = 0
             while True:
                 a = self.evaluate_action(s)  # We use the deterministic policy during the evaluating
                 s_, r, done, truncted, _ = env.step(a)
                 if self.use_state_norm:
-                    s_ = self.state_norm(s_, update=False)
+                    s_ = self.state_norm_target(s_ , update=False)
                
                 episode_reward += r
                 s = s_
