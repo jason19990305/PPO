@@ -5,6 +5,7 @@ class RunningMeanStd:
     # Dynamically calculate mean and std
     def __init__(self, shape):  # shape:the dimension of input data
         self.n = 0
+        self.name = "RunningMeanStd"
         self.mean = np.zeros(shape)
         self.S = np.zeros(shape)
         self.std = np.sqrt(self.S)
@@ -25,10 +26,10 @@ class Normalization:
     def __init__(self, shape):
         self.running_ms = RunningMeanStd(shape=shape)
 
-    def __call__(self, x, update=True):
+    def __call__(self, x, update=False):
+
         # Whether to update the mean and std,during the evaluating,update=False
-        if update:
+        if update:            
             self.running_ms.update(x)
         x = (x - self.running_ms.mean) / (self.running_ms.std + 1e-8)
-
         return x

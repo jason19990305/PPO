@@ -40,7 +40,9 @@ class Agent():
         self.num_envs = os.cpu_count() - 1
         self.replay_buffer = ReplayBuffer(args)
         self.state_norm = Normalization(shape=self.num_states)
+        self.state_norm.running_ms.name = "state_norm"
         self.state_norm_target = Normalization(shape=self.num_states)
+        self.state_norm_target.running_ms.name = "state_norm_target"
         
         env_fns = [lambda : gym.make(self.env_name) for _ in range(self.num_envs)]
         self.venv = AsyncVectorEnv(env_fns , autoreset_mode= gym.vector.AutoresetMode.SAME_STEP)
@@ -80,41 +82,50 @@ class Agent():
             a = torch.clamp(a, -1, 1)  # Ensure action is within bounds
 
         return a.numpy().flatten()
-    def train_v(self):
+    
+    def train(self):
         time_start = time.time()
         step_reward_list = []
         step_count_list = []
         evaluate_count = 0
         
         s , infos = self.venv.reset()
-        if self.use_state_norm:
-            s = self.state_norm_target(s , update=False) # get normalized state
-            
+        
+        if self.use_state_norm:        
+            for i in range(self.num_envs):
+                s[i,:] = self.state_norm_target(copy.deepcopy(s[i]) , update=False) # get normalized state
+                self.state_norm(copy.deepcopy(s[i]) , update = True)
+
+                
         for i in range(int(self.max_train_steps//self.batch_size)):
             for step in range(self.batch_size // self.num_envs + 1):
                 a , log_prob = self.choose_action(s)
                 action = a * self.env.action_space.high[0]
-                s_ , r , done, truncated, infos = self.venv.step(action)   
-                
-                if self.use_state_norm:
-                    s_ = self.state_norm_target(s_ , update=False) # get normalized state
-                    
+                s_ , r , done, truncated, infos = self.venv.step(action) 
+                print("---------------------")  
+                print(s_)
                 for j in range(self.num_envs):
                     if done[j] or truncated[j]:
                         next_state = infos["final_obs"][j]
                     else : 
-                        next_state = s_[j]
-
-                    if self.use_state_norm:
-                        self.state_norm(copy.deepcopy(next_state) , update = True) # update state normalization
+                        next_state = copy.deepcopy(s_[j])
                         
+                    if self.use_state_norm:
+                        s_[j , :] = np.array(self.state_norm_target(copy.deepcopy(s_[j , :]) , update=False)) # get normalized state 
+                        print(s_[j].shape)
+                        print(self.state_norm_target(copy.deepcopy(s_[j , :]) , update=False).shape)
+                        next_state = self.state_norm_target(copy.deepcopy(next_state) , update=False) # get normalized state
+                        self.state_norm(copy.deepcopy(next_state) , update = True) # update state normalization
+                    print(j)
+                    print(s_)
                     # s, a , log_prob , r, s_, done , truncate
-                    self.replay_buffer.store(s[j], a[j], log_prob[j], [r[j]], next_state, [done[j]], [truncated[j] | done[j]])
+                    self.replay_buffer.store(s[j], a[j], log_prob[j], [r[j]], next_state, [done[j]], [truncated[j] or done[j]])
                     self.total_steps += 1
                     evaluate_count += 1
+                print(s_)
                 s = s_
             self.update()
-            if evaluate_count > self.evaluate_freq_steps:
+            if evaluate_count >= self.evaluate_freq_steps:
                 evaluate_reward = self.evaluate(self.env_eval)
                 step_reward_list.append(evaluate_reward)
                 step_count_list.append(self.total_steps)
@@ -128,67 +139,12 @@ class Agent():
                 evaluate_count = 0
          # Plot the training curve
         plt.plot(step_count_list, step_reward_list)
-        plt.xlabel("Epoch")
+        plt.xlabel("Steps")
         plt.ylabel("Reward")
         plt.title("Training Curve")
         plt.show()
                 
-    def train(self):
-        time_start = time.time()
-        epoch_reward_list = []
-        epoch_count_list = []
-        epoch_count = 0
-        # Training loop
-        while self.total_steps < self.max_train_steps:
-            # reset environment
-            s, info = self.env.reset()
-            if self.use_state_norm:
-                self.state_norm(copy.deepcopy(s) , update = True) # update state normalization
-                s = self.state_norm_target(s , update=False) # get normalized state
-
-            while True:                
-                a , log_prob= self.choose_action(s)
-                # interact with environment
-                action = a * self.env.action_space.high[0]
-                s_ , r , done, truncated, _ = self.env.step(action)   
-                if self.use_state_norm:
-                    self.state_norm(copy.deepcopy(s_) , update = True) # update state normalization
-                    s_ = self.state_norm_target(s_ , update=False) # get normalized state
-
-                # stoare transition in replay buffer
-                self.replay_buffer.store(s, a, log_prob, [r], s_, [done] , [truncated | done])
-                # update state
-                s = s_
-                
-                if self.replay_buffer.count >= self.batch_size:
-                    self.update()
-                    epoch_count += 1
-            
-                if self.total_steps % self.evaluate_freq_steps == 0:
-                    self.evaluate_count += 1
-                    evaluate_reward = self.evaluate(self.env_eval)
-                    epoch_reward_list.append(evaluate_reward)
-                    epoch_count_list.append(epoch_count)
-                    time_end = time.time()
-                    h = int((time_end - time_start) // 3600)
-                    m = int(((time_end - time_start) % 3600) // 60)
-                    second = int((time_end - time_start) % 60)
-                    print("---------")
-                    print("Time : %02d:%02d:%02d"%(h,m,second))
-                    print("Training epoch : %d\tStep : %d / %d"%(epoch_count,self.total_steps,self.max_train_steps))
-                    print("Evaluate count : %d\tEvaluate reward : %0.2f"%(self.evaluate_count,evaluate_reward))
-                    
-                self.total_steps += 1
-                if done or truncated :
-                    break
-            epoch_count += 1
-
-        # Plot the training curve
-        plt.plot(epoch_count_list, epoch_reward_list)
-        plt.xlabel("Epoch")
-        plt.ylabel("Reward")
-        plt.title("Training Curve")
-        plt.show()
+    
     # Generalized Advantage Estimation
     def GAE(self , vs , vs_ , r , done , truncated):
         adv = []
@@ -206,8 +162,15 @@ class Agent():
     
     def update(self):
         s, a, old_log_prob , r, s_, done , truncated = self.replay_buffer.numpy_to_tensor()
-        
 
+        print(s.shape)
+        print(a.shape)
+        print(old_log_prob.shape)
+        print(r.shape)
+        print(s_.shape)
+        print(done.shape)
+        print(truncated.shape)
+        
         print(torch.exp(self.actor.log_std))
         
         with torch.no_grad():
