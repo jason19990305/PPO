@@ -94,7 +94,7 @@ class Agent():
         if self.use_state_norm:        
             for i in range(self.num_envs):
                 s[i,:] = self.state_norm_target(copy.deepcopy(s[i]) , update=False) # get normalized state
-                self.state_norm(copy.deepcopy(s[i]) , update = True)
+                self.state_norm(copy.deepcopy(s[i , :]) , update = True)
 
                 
         for i in range(int(self.max_train_steps//self.batch_size)):
@@ -103,7 +103,6 @@ class Agent():
                 action = a * self.env.action_space.high[0]
                 s_ , r , done, truncated, infos = self.venv.step(action) 
                 print("---------------------")  
-                print(s_)
                 for j in range(self.num_envs):
                     if done[j] or truncated[j]:
                         next_state = infos["final_obs"][j]
@@ -111,18 +110,16 @@ class Agent():
                         next_state = copy.deepcopy(s_[j])
                         
                     if self.use_state_norm:
-                        s_[j , :] = np.array(self.state_norm_target(copy.deepcopy(s_[j , :]) , update=False)) # get normalized state 
-                        print(s_[j].shape)
-                        print(self.state_norm_target(copy.deepcopy(s_[j , :]) , update=False).shape)
+                        #s_[j , :] = np.array(self.state_norm_target(copy.deepcopy(s_[j , :]) , update=False)) # get normalized state 
                         next_state = self.state_norm_target(copy.deepcopy(next_state) , update=False) # get normalized state
                         self.state_norm(copy.deepcopy(next_state) , update = True) # update state normalization
-                    print(j)
-                    print(s_)
+
                     # s, a , log_prob , r, s_, done , truncate
                     self.replay_buffer.store(s[j], a[j], log_prob[j], [r[j]], next_state, [done[j]], [truncated[j] or done[j]])
                     self.total_steps += 1
                     evaluate_count += 1
-                print(s_)
+                print(self.state_norm_target.running_ms.mean)
+                s_ = (s_ - self.state_norm_target.running_ms.mean) / (self.state_norm_target.running_ms.std + 1e-8) 
                 s = s_
             self.update()
             if evaluate_count >= self.evaluate_freq_steps:
