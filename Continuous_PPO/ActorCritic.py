@@ -29,7 +29,7 @@ class Actor(nn.Module):
 
         # Convert list to ModuleList for proper registration
         self.layers = nn.ModuleList(fc_list)
-        self.log_std = nn.Parameter(torch.zeros(1, self.num_actions))
+        self.log_std = nn.Parameter(torch.zeros(1, self.num_actions) + 1.0)
         self.tanh = nn.Tanh()
         
     def forward(self, x):

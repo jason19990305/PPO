@@ -104,8 +104,10 @@ class Agent():
                         next_state = infos["final_obs"][j]
                     else : 
                         next_state = s_[j]
+
                     if self.use_state_norm:
                         self.state_norm(copy.deepcopy(next_state) , update = True) # update state normalization
+                        
                     # s, a , log_prob , r, s_, done , truncate
                     self.replay_buffer.store(s[j], a[j], log_prob[j], [r[j]], next_state, [done[j]], [truncated[j] | done[j]])
                     self.total_steps += 1
@@ -291,6 +293,7 @@ class Agent():
             s , info = env.reset()
             if self.use_state_norm:
                 s = self.state_norm_target(s , update=False)
+                
             episode_reward = 0
             while True:
                 a = self.evaluate_action(s)  # We use the deterministic policy during the evaluating
