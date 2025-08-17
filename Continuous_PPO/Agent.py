@@ -1,13 +1,15 @@
 from Continuous_PPO.ReplayBuffer import ReplayBuffer
 from Continuous_PPO.ActorCritic import Actor,Critic
 from Continuous_PPO.Normalization import Normalization
-import numpy as np
-import copy
-import torch
-import torch.nn as nn
+from gymnasium.vector import AsyncVectorEnv
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
+import gymnasium as gym
+import numpy as np
+import torch
+import copy
 import time
+import os 
 
 class Agent():
     def __init__(self , args , env , hidden_layer_list=[64,64]):
@@ -18,6 +20,7 @@ class Agent():
         self.use_state_norm = args.use_state_norm
         self.num_actions = args.num_actions
         self.num_states = args.num_states
+        self.env_name = args.env_name
         self.entropy_coef = args.entropy_coef
         self.batch_size = args.batch_size
         self.epsilon = args.epsilon
@@ -28,17 +31,19 @@ class Agent():
         self.lr = args.lr     
         
         # Variable
-        self.episode_count = 0
         self.total_steps = 0
-        self.evaluate_count = 0
 
                 
         # other
         self.env = env
         self.env_eval = copy.deepcopy(env)
+        self.num_envs = os.cpu_count() - 1
         self.replay_buffer = ReplayBuffer(args)
         self.state_norm = Normalization(shape=self.num_states)
         self.state_norm_target = Normalization(shape=self.num_states)
+        
+        env_fns = [lambda : gym.make(self.env_name) for _ in range(self.num_envs)]
+        self.venv = AsyncVectorEnv(env_fns , autoreset_mode= gym.vector.AutoresetMode.SAME_STEP)
         
         
         # The model interacts with the environment and gets updated continuously
@@ -50,18 +55,21 @@ class Agent():
         self.optimizer_actor = torch.optim.Adam(self.actor.parameters(), lr=self.lr, eps=1e-5)
         self.optimizer_critic = torch.optim.Adam(self.critic.parameters(), lr=self.lr, eps=1e-5)
         
-        
+    def __del__(self):
+        if hasattr(self, 'venv') and self.venv is not None:
+            self.venv.close()
+            print("VectorEnv closed in __del__.")
+            
     def choose_action(self, state):
         state = torch.tensor(state, dtype=torch.float)
 
         with torch.no_grad():
-            s = torch.unsqueeze(state, dim=0)
-            dist = self.actor.get_dist(s)
+            dist = self.actor.get_dist(state)
             a = dist.sample()
             a = torch.clamp(a, -1, 1)  # Ensure action is within bounds
             log_prob = dist.log_prob(a)
             
-        return a.numpy().flatten() , log_prob.numpy().flatten()
+        return a.numpy() , log_prob.numpy()
 
     def evaluate_action(self, state):
         state = torch.tensor(state, dtype=torch.float)
@@ -72,7 +80,57 @@ class Agent():
             a = torch.clamp(a, -1, 1)  # Ensure action is within bounds
 
         return a.numpy().flatten()
+    def train_v(self):
+        time_start = time.time()
+        step_reward_list = []
+        step_count_list = []
+        evaluate_count = 0
         
+        s , infos = self.venv.reset()
+        if self.use_state_norm:
+            self.state_norm(copy.deepcopy(s) , update = True) # update state normalization
+            s = self.state_norm_target(s , update=False) # get normalized state
+            
+        for i in range(int(self.max_train_steps//self.batch_size)):
+            for step in range(self.batch_size // self.num_envs + 1):
+                a , log_prob = self.choose_action(s)
+                action = a * self.env.action_space.high[0]
+                s_ , r , done, truncated, infos = self.venv.step(action)   
+                
+                if self.use_state_norm:
+                    self.state_norm(copy.deepcopy(s_) , update = True) # update state normalization
+                    s_ = self.state_norm_target(s_ , update=False) # get normalized state
+                    
+                for j in range(self.num_envs):
+                    if done[j] or truncated[j]:
+                        next_state = infos["final_obs"][j]
+                    else : 
+                        next_state = s_[j]
+                    # s, a , log_prob , r, s_, done , truncate
+                    self.replay_buffer.store(s[j], a[j], log_prob[j], [r[j]], next_state, [done[j]], [truncated[j] | done[j]])
+                    self.total_steps += 1
+                    evaluate_count += 1
+                s = s_
+            self.update()
+            if evaluate_count > self.evaluate_freq_steps:
+                evaluate_reward = self.evaluate(self.env_eval)
+                step_reward_list.append(evaluate_reward)
+                step_count_list.append(self.total_steps)
+                time_end = time.time()
+                h = int((time_end - time_start) // 3600)
+                m = int(((time_end - time_start) % 3600) // 60)
+                second = int((time_end - time_start) % 60)
+                print("---------")
+                print("Time : %02d:%02d:%02d"%(h,m,second))
+                print("Step : %d / %d\tEvaluate reward : %0.2f"%(self.total_steps,self.max_train_steps,evaluate_reward))
+                evaluate_count = 0
+         # Plot the training curve
+        plt.plot(step_count_list, step_reward_list)
+        plt.xlabel("Epoch")
+        plt.ylabel("Reward")
+        plt.title("Training Curve")
+        plt.show()
+                
     def train(self):
         time_start = time.time()
         epoch_reward_list = []
@@ -166,10 +224,10 @@ class Agent():
             adv = ((adv - adv.mean()) / (adv.std() + 1e-8))
        
         
-        
+        batch_size = s.shape[0]
         for i in range(self.epochs):
-            for j in range(self.batch_size//self.mini_batch_size):
-                index = np.random.choice(self.batch_size, self.mini_batch_size, replace=False)
+            for j in range(batch_size//self.mini_batch_size):
+                index = np.random.choice(batch_size, self.mini_batch_size, replace=False)
                 
                 # Update Actor
                 # Get action probability from the model

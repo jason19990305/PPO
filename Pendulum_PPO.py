@@ -9,10 +9,12 @@ class main():
     def __init__(self , args):
         
         env_name = 'Pendulum-v1'
+        # Create the environment for evaluation
         env = gym.make(env_name)
         
         args.num_states = env.observation_space.shape[0]
         args.num_actions = env.action_space.shape[0]
+        args.env_name = env_name
         print(env.action_space)
         # Pring hyperparameters 
         print("---------------")
@@ -23,7 +25,7 @@ class main():
         
         self.agent = Agent(args, env , [256,256]) # hidden layer size   
         
-        self.agent.train()       
+        self.agent.train_v()       
         render_env = gym.make(env_name, render_mode="human")  
         for i in range(1000):
             self.agent.evaluate(render_env)
