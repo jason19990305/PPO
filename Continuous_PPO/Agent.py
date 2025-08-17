@@ -88,7 +88,6 @@ class Agent():
         
         s , infos = self.venv.reset()
         if self.use_state_norm:
-            self.state_norm(copy.deepcopy(s) , update = True) # update state normalization
             s = self.state_norm_target(s , update=False) # get normalized state
             
         for i in range(int(self.max_train_steps//self.batch_size)):
@@ -98,7 +97,6 @@ class Agent():
                 s_ , r , done, truncated, infos = self.venv.step(action)   
                 
                 if self.use_state_norm:
-                    self.state_norm(copy.deepcopy(s_) , update = True) # update state normalization
                     s_ = self.state_norm_target(s_ , update=False) # get normalized state
                     
                 for j in range(self.num_envs):
@@ -106,6 +104,8 @@ class Agent():
                         next_state = infos["final_obs"][j]
                     else : 
                         next_state = s_[j]
+                    if self.use_state_norm:
+                        self.state_norm(copy.deepcopy(next_state) , update = True) # update state normalization
                     # s, a , log_prob , r, s_, done , truncate
                     self.replay_buffer.store(s[j], a[j], log_prob[j], [r[j]], next_state, [done[j]], [truncated[j] | done[j]])
                     self.total_steps += 1
