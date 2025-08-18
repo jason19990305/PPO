@@ -39,7 +39,7 @@ if __name__ == '__main__':
     parser.add_argument("--entropy_coef", type=float, default=0.00, help="Entropy bonus coefficient added to the actor loss")
     parser.add_argument("--batch_size", type=int, default=1024, help="Number of collected samples per update (batch size)")
     parser.add_argument("--epsilon", type=float, default=0.2, help="PPO clipping parameter (epsilon)")
-    parser.add_argument("--epochs", type=int, default=5, help="Number of epochs to run over the batch each update")
+    parser.add_argument("--epochs", type=int, default=10, help="Number of epochs to run over the batch each update")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor for future rewards (gamma)")
     parser.add_argument("--lamda", type=float, default=0.95, help="GAE lambda parameter (bias–variance trade-off)")
     parser.add_argument("--gae", type=bool, default=True, help="Use GAE for advantage estimation")

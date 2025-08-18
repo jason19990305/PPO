@@ -72,8 +72,8 @@ class Agent():
         
     def train(self):
         time_start = time.time()
-        epoch_reward_list = []
-        epoch_count_list = []
+        step_reward_list = []
+        step_count_list = []
         epoch_count = 0
         
         # Training loop
@@ -105,16 +105,15 @@ class Agent():
                 if self.total_steps % self.evaluate_freq_steps == 0:
                     self.evaluate_count += 1
                     evaluate_reward = self.evaluate(self.env_eval)
-                    epoch_reward_list.append(evaluate_reward)
-                    epoch_count_list.append(epoch_count)
+                    step_reward_list.append(evaluate_reward)
+                    step_count_list.append(epoch_count)
                     time_end = time.time()
                     h = int((time_end - time_start) // 3600)
                     m = int(((time_end - time_start) % 3600) // 60)
                     second = int((time_end - time_start) % 60)
                     print("---------")
                     print("Time : %02d:%02d:%02d"%(h,m,second))
-                    print("Training epoch : %d\tStep : %d / %d"%(epoch_count,self.total_steps,self.max_train_steps))
-                    print("Evaluate count : %d\tEvaluate reward : %0.2f"%(self.evaluate_count,evaluate_reward))
+                    print("Step : %d / %d\tEvaluate reward : %0.2f"%(self.total_steps,self.max_train_steps,evaluate_reward))
                     
                 self.total_steps += 1
                 if done or truncated :
@@ -122,7 +121,7 @@ class Agent():
             epoch_count += 1
 
         # Plot the training curve
-        plt.plot(epoch_count_list, epoch_reward_list)
+        plt.plot(step_count_list, step_reward_list)
         plt.xlabel("Epoch")
         plt.ylabel("Reward")
         plt.title("Training Curve")

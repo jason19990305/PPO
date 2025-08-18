@@ -61,7 +61,8 @@ class Agent():
         if hasattr(self, 'venv') and self.venv is not None:
             self.venv.close()
             print("VectorEnv closed in __del__.")
-            
+
+    # choose action
     def choose_action(self, state):
         state = torch.tensor(state, dtype=torch.float)
 
@@ -72,7 +73,8 @@ class Agent():
             log_prob = dist.log_prob(a)
             
         return a.numpy() , log_prob.numpy()
-
+    
+    # evaluate action
     def evaluate_action(self, state):
         state = torch.tensor(state, dtype=torch.float)
 
@@ -89,26 +91,31 @@ class Agent():
         step_count_list = []
         evaluate_count = 0
         
-        s , infos = self.venv.reset()
-        
+        # Reset Vector Env
+        s , infos = self.venv.reset()        
+        # State Normalization
         if self.use_state_norm:        
             for i in range(self.num_envs):           
                 self.state_norm(s[i] , update = True)
                 s[i] = self.state_norm_target(s[i] , update=False) # get normalized state
                 
 
-                
+        # Training Loop
         for i in range(int(self.max_train_steps//self.batch_size)):
+            # Sample data
             for step in range(self.batch_size // self.num_envs + 1):
+                # Choose action
                 a , log_prob = self.choose_action(s)
+                # Scale action
                 action = a * self.env.action_space.high[0]
-                s_ , r , done, truncated, infos = self.venv.step(action) 
+                s_ , r , done, truncated, infos = self.venv.step(action)  # Vector Env
+                # Handle final state
                 for j in range(self.num_envs):
                     if done[j] or truncated[j]:
                         next_state = infos["final_obs"][j]
                     else : 
                         next_state = copy.deepcopy(s_[j])
-                        
+                    # State Normalization
                     if self.use_state_norm:
                         self.state_norm(next_state , update = True) # update state normalization                        
                         next_state = self.state_norm_target(next_state , update=False) # get normalized state
@@ -119,10 +126,13 @@ class Agent():
                     self.replay_buffer.store(s[j], a[j], log_prob[j], [r[j]], next_state, [done[j]], [truncated[j] or done[j]])
                     self.total_steps += 1
                     evaluate_count += 1
-                #print(self.state_norm_target.running_ms.mean)
-                #s_ = (s_ - self.state_norm_target.running_ms.mean) / (self.state_norm_target.running_ms.std + 1e-8) 
+                
                 s = s_
+            
+            # Update 
             self.update()
+            
+            # Evaluate
             if evaluate_count >= self.evaluate_freq_steps:
                 evaluate_reward = self.evaluate(self.env_eval)
                 step_reward_list.append(evaluate_reward)
@@ -135,7 +145,8 @@ class Agent():
                 print("Time : %02d:%02d:%02d"%(h,m,second))
                 print("Step : %d / %d\tEvaluate reward : %0.2f"%(self.total_steps,self.max_train_steps,evaluate_reward))
                 evaluate_count = 0
-         # Plot the training curve
+                
+        # Plot the training curve
         plt.plot(step_count_list, step_reward_list)
         plt.xlabel("Steps")
         plt.ylabel("Reward")
@@ -160,10 +171,6 @@ class Agent():
     
     def update(self):
         s, a, old_log_prob , r, s_, done , truncated = self.replay_buffer.numpy_to_tensor()
-
-
-        
-        #print(torch.exp(self.actor.log_std))
         
         with torch.no_grad():
             # current value
@@ -175,8 +182,11 @@ class Agent():
                 # Use GAE for advantage estimation
                 target_value , adv = self.GAE(value, next_value, r, done , truncated)
             else :                 
-                target_value = r + self.gamma * next_value * (1.0 - done)  # TD target
+                # TD-Error
+                target_value = r + self.gamma * next_value * (1.0 - done)  
+                # baseline
                 adv = target_value - value
+            
             # advantage normalization
             adv = ((adv - adv.mean()) / (adv.std() + 1e-8))
        
@@ -184,27 +194,20 @@ class Agent():
         batch_size = s.shape[0]
         for i in range(self.epochs):
             for j in range(batch_size//self.mini_batch_size):
+                # random sample
                 index = np.random.choice(batch_size, self.mini_batch_size, replace=False)
                 
                 # Update Actor
                 # Get action probability from the model
                 dist = self.actor.get_dist(s[index])
                 # get entropy of actor distribution
-                prob_entropy = dist.entropy().sum(dim=1, keepdim=True)   
-                
+                prob_entropy = dist.entropy().sum(dim=1, keepdim=True)                   
                 # Get log probability
                 log_prob = dist.log_prob(a[index])
-                # Calculate the ratio of new and old probabilities   
-                
-                ratio = torch.exp(log_prob.sum(dim = 1, keepdim=True) - old_log_prob[index].sum(dim = 1, keepdim=True))    
-                  
+                # Calculate the ratio of new and old probabilities
+                ratio = torch.exp(log_prob.sum(dim=1, keepdim=True) - old_log_prob[index].sum(dim=1, keepdim=True))
                 p1 = ratio * adv[index]
-                 
                 p2 = torch.clamp(ratio, 1 - self.epsilon, 1 + self.epsilon) * adv[index]
-                #print(p1)
-                #print(p2)
-                
-                # Calculate loss
                 actor_loss = torch.min(p1, p2) - prob_entropy * self.entropy_coef 
                 
                 # Mean actor loss and add entropy term
@@ -223,8 +226,9 @@ class Agent():
                 # Gradient clipping
                 torch.nn.utils.clip_grad_norm_(self.critic.parameters(), 0.5)
                 self.optimizer_critic.step()
-                
+        # Update learning rate
         self.lr_decay(self.total_steps)  # Learning rate decay
+        # Update state normalization
         self.update_normalization()
         
     def update_normalization(self):
