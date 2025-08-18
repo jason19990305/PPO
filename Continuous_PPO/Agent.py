@@ -92,9 +92,10 @@ class Agent():
         s , infos = self.venv.reset()
         
         if self.use_state_norm:        
-            for i in range(self.num_envs):
-                s[i,:] = self.state_norm_target(copy.deepcopy(s[i]) , update=False) # get normalized state
-                self.state_norm(copy.deepcopy(s[i , :]) , update = True)
+            for i in range(self.num_envs):           
+                self.state_norm(s[i] , update = True)
+                s[i] = self.state_norm_target(s[i] , update=False) # get normalized state
+                
 
                 
         for i in range(int(self.max_train_steps//self.batch_size)):
@@ -102,7 +103,6 @@ class Agent():
                 a , log_prob = self.choose_action(s)
                 action = a * self.env.action_space.high[0]
                 s_ , r , done, truncated, infos = self.venv.step(action) 
-                print("---------------------")  
                 for j in range(self.num_envs):
                     if done[j] or truncated[j]:
                         next_state = infos["final_obs"][j]
@@ -110,16 +110,17 @@ class Agent():
                         next_state = copy.deepcopy(s_[j])
                         
                     if self.use_state_norm:
-                        #s_[j , :] = np.array(self.state_norm_target(copy.deepcopy(s_[j , :]) , update=False)) # get normalized state 
-                        next_state = self.state_norm_target(copy.deepcopy(next_state) , update=False) # get normalized state
-                        self.state_norm(copy.deepcopy(next_state) , update = True) # update state normalization
+                        self.state_norm(next_state , update = True) # update state normalization                        
+                        next_state = self.state_norm_target(next_state , update=False) # get normalized state
+                        s_[j] = self.state_norm_target(s_[j] , update=False) # get normalized state
+                        
 
                     # s, a , log_prob , r, s_, done , truncate
                     self.replay_buffer.store(s[j], a[j], log_prob[j], [r[j]], next_state, [done[j]], [truncated[j] or done[j]])
                     self.total_steps += 1
                     evaluate_count += 1
-                print(self.state_norm_target.running_ms.mean)
-                s_ = (s_ - self.state_norm_target.running_ms.mean) / (self.state_norm_target.running_ms.std + 1e-8) 
+                #print(self.state_norm_target.running_ms.mean)
+                #s_ = (s_ - self.state_norm_target.running_ms.mean) / (self.state_norm_target.running_ms.std + 1e-8) 
                 s = s_
             self.update()
             if evaluate_count >= self.evaluate_freq_steps:
@@ -160,15 +161,9 @@ class Agent():
     def update(self):
         s, a, old_log_prob , r, s_, done , truncated = self.replay_buffer.numpy_to_tensor()
 
-        print(s.shape)
-        print(a.shape)
-        print(old_log_prob.shape)
-        print(r.shape)
-        print(s_.shape)
-        print(done.shape)
-        print(truncated.shape)
+
         
-        print(torch.exp(self.actor.log_std))
+        #print(torch.exp(self.actor.log_std))
         
         with torch.no_grad():
             # current value
