@@ -119,8 +119,8 @@ class Agent():
 
         # Plot the training curve
         plt.plot(step_count_list, step_reward_list)
-        plt.xlabel("Epoch")
-        plt.ylabel("Steps")
+        plt.xlabel("Steps")
+        plt.ylabel("Reward")
         plt.title("Training Curve")
         plt.show()
         
