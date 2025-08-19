@@ -1,9 +1,10 @@
 import gymnasium as gym
 import numpy as np
 import argparse
-import time
 
 from Continuous_PPO.Agent import Agent
+
+from gymnasium.wrappers import RecordVideo
 
 class main():
     def __init__(self , args):
@@ -23,10 +24,11 @@ class main():
         
         self.agent = Agent(args, env , [512,512]) # hidden layer size   
         
+        
         self.agent.train()       
-        render_env = gym.make(env_name, render_mode="human")  
-        for i in range(1000):
-            self.agent.evaluate(render_env)
+        render_env = gym.make(env_name, render_mode="rgb_array")  
+        render_env = RecordVideo(render_env, video_folder = "Video/"+env_name, episode_trigger=lambda x: True)
+        self.agent.evaluate(render_env)
         render_env.close()
 
 
