@@ -8,7 +8,7 @@ from Continuous_PPO.Agent import Agent
 class main():
     def __init__(self , args):
         
-        env_name = 'HumanoidStandup-v5'
+        env_name = 'Walker2d-v5'
         # Create the environment for evaluation
         env = gym.make(env_name)
         
