@@ -38,7 +38,7 @@ if __name__ == '__main__':
     parser.add_argument("--mini_batch_size", type=int, default=32, help="Mini-batch size used for PPO updates")
     parser.add_argument("--max_train_steps", type=int, default=1e5, help="Total number of environment steps for training")
     parser.add_argument("--use_state_norm", type=bool, default=True, help="Whether to apply state normalization")
-    parser.add_argument("--entropy_coef", type=float, default=0.00, help="Entropy bonus coefficient added to the actor loss")
+    parser.add_argument("--entropy_coef", type=float, default=0.01, help="Entropy bonus coefficient added to the actor loss")
     parser.add_argument("--batch_size", type=int, default=1024, help="Number of collected samples per update (batch size)")
     parser.add_argument("--epsilon", type=float, default=0.2, help="PPO clipping parameter (epsilon)")
     parser.add_argument("--epochs", type=int, default=50, help="Number of epochs to run over the batch each update")
