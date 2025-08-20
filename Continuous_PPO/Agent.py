@@ -37,15 +37,12 @@ class Agent():
         # other
         self.env = env
         self.env_eval = copy.deepcopy(env)
-        self.num_envs = os.cpu_count() - 1
         self.replay_buffer = ReplayBuffer(args)
         self.state_norm = Normalization(shape=self.num_states)
         self.state_norm.running_ms.name = "state_norm"
         self.state_norm_target = Normalization(shape=self.num_states)
         self.state_norm_target.running_ms.name = "state_norm_target"
         
-        env_fns = [lambda : gym.make(self.env_name) for _ in range(self.num_envs)]
-        self.venv = AsyncVectorEnv(env_fns , autoreset_mode= gym.vector.AutoresetMode.SAME_STEP)
         
         
         # The model interacts with the environment and gets updated continuously
@@ -67,14 +64,14 @@ class Agent():
         state = torch.tensor(state, dtype=torch.float)
 
         with torch.no_grad():
-            dist = self.actor.get_dist(state)
+            s = torch.unsqueeze(state, dim=0)
+            dist = self.actor.get_dist(s)
             a = dist.sample()
             a = torch.clamp(a, -1, 1)  # Ensure action is within bounds
             log_prob = dist.log_prob(a)
             
-        return a.numpy() , log_prob.numpy()
-    
-    # evaluate action
+        return a.numpy().flatten() , log_prob.numpy().flatten()
+
     def evaluate_action(self, state):
         state = torch.tensor(state, dtype=torch.float)
 
@@ -89,63 +86,48 @@ class Agent():
         time_start = time.time()
         step_reward_list = []
         step_count_list = []
-        evaluate_count = 0
-        
-        # Reset Vector Env
-        s , infos = self.venv.reset()        
-        # State Normalization
-        if self.use_state_norm:        
-            for i in range(self.num_envs):           
-                self.state_norm(s[i] , update = True)
-                s[i] = self.state_norm_target(s[i] , update=False) # get normalized state
-                
 
-        # Training Loop
-        for i in range(int(self.max_train_steps//self.batch_size)):
-            # Sample data
-            for step in range(self.batch_size // self.num_envs + 1):
-                # Choose action
-                a , log_prob = self.choose_action(s)
-                # Scale action
+        # Training loop
+        while self.total_steps < self.max_train_steps:
+            # reset environment
+            s, info = self.env.reset()
+            if self.use_state_norm:
+                self.state_norm(copy.deepcopy(s) , update = True) # update state normalization
+                s = self.state_norm_target(s , update=False) # get normalized state
+
+            while True:                
+                a , log_prob= self.choose_action(s)
+                # interact with environment
                 action = a * self.env.action_space.high[0]
-                s_ , r , done, truncated, infos = self.venv.step(action)  # Vector Env
-                # Handle final state
-                for j in range(self.num_envs):
-                    if done[j] or truncated[j]:
-                        next_state = infos["final_obs"][j]
-                    else : 
-                        next_state = copy.deepcopy(s_[j])
-                    # State Normalization
-                    if self.use_state_norm:
-                        self.state_norm(next_state , update = True) # update state normalization                        
-                        next_state = self.state_norm_target(next_state , update=False) # get normalized state
-                        s_[j] = self.state_norm_target(s_[j] , update=False) # get normalized state
-                        
+                s_ , r , done, truncated, _ = self.env.step(action)   
+                if self.use_state_norm:
+                    self.state_norm(copy.deepcopy(s_) , update = True) # update state normalization
+                    s_ = self.state_norm_target(s_ , update=False) # get normalized state
 
-                    # s, a , log_prob , r, s_, done , truncate
-                    self.replay_buffer.store(s[j], a[j], log_prob[j], [r[j]], next_state, [done[j]], [truncated[j] or done[j]])
-                    self.total_steps += 1
-                    evaluate_count += 1
-                
+                # stoare transition in replay buffer
+                self.replay_buffer.store(s, a, log_prob, [r], s_, [done] , [truncated | done])
+                # update state
                 s = s_
-            
-            # Update 
-            self.update()
-            
-            # Evaluate
-            if evaluate_count >= self.evaluate_freq_steps:
-                evaluate_reward = self.evaluate(self.env_eval)
-                step_reward_list.append(evaluate_reward)
-                step_count_list.append(self.total_steps)
-                time_end = time.time()
-                h = int((time_end - time_start) // 3600)
-                m = int(((time_end - time_start) % 3600) // 60)
-                second = int((time_end - time_start) % 60)
-                print("---------")
-                print("Time : %02d:%02d:%02d"%(h,m,second))
-                print("Step : %d / %d\tEvaluate reward : %0.2f"%(self.total_steps,self.max_train_steps,evaluate_reward))
-                evaluate_count = 0
                 
+                if self.replay_buffer.count >= self.batch_size:
+                    self.update()
+            
+                if self.total_steps % self.evaluate_freq_steps == 0:
+                    evaluate_reward = self.evaluate(self.env_eval)
+                    step_reward_list.append(evaluate_reward)
+                    step_count_list.append(self.total_steps)
+                    time_end = time.time()
+                    h = int((time_end - time_start) // 3600)
+                    m = int(((time_end - time_start) % 3600) // 60)
+                    second = int((time_end - time_start) % 60)
+                    print("---------")
+                    print("Time : %02d:%02d:%02d"%(h,m,second))
+                    print("Step : %d / %d\tEvaluate reward : %0.2f"%(self.total_steps,self.max_train_steps,evaluate_reward))
+                    
+                self.total_steps += 1
+                if done or truncated :
+                    break
+
         # Plot the training curve
         plt.plot(step_count_list, step_reward_list)
         plt.xlabel("Steps")
