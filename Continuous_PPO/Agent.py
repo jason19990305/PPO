@@ -154,20 +154,7 @@ class Agent():
         plt.show()
                 
     
-    # Generalized Advantage Estimation
-    def GAE(self , vs , vs_ , r , done , truncated):
-        adv = []
-        gae = 0
-        with torch.no_grad():  # adv and v_target have no gradient
-            
-            deltas = r + self.gamma * (1.0 - done) * vs_ - vs
-            for delta, d in zip(reversed(deltas.flatten().numpy()), reversed(truncated.flatten().numpy())):
-                gae = delta + self.gamma * self.lamda * gae * (1.0 - d)
-                adv.insert(0, gae)
-            adv = torch.tensor(adv, dtype=torch.float).view(-1, 1)
-            v_target = adv + vs
-            
-        return v_target , adv
+    
     
     def update(self):
         s, a, old_log_prob , r, s_, done , truncated = self.replay_buffer.numpy_to_tensor()
