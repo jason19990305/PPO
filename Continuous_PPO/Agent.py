@@ -26,8 +26,6 @@ class Agent():
         self.epsilon = args.epsilon
         self.epochs = args.epochs        
         self.gamma = args.gamma
-        self.lamda = args.lamda
-        self.gae = args.gae
         self.lr = args.lr     
         
         # Variable
@@ -164,15 +162,11 @@ class Agent():
             value = self.critic(s)    
             # next value        
             next_value = self.critic(s_)
-            
-            if self.gae:
-                # Use GAE for advantage estimation
-                target_value , adv = self.GAE(value, next_value, r, done , truncated)
-            else :                 
-                # TD-Error
-                target_value = r + self.gamma * next_value * (1.0 - done)  
-                # baseline
-                adv = target_value - value
+                  
+            # TD-Error
+            target_value = r + self.gamma * next_value * (1.0 - done)  
+            # baseline
+            adv = target_value - value
             
             # advantage normalization
             adv = ((adv - adv.mean()) / (adv.std() + 1e-8))
