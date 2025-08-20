@@ -14,6 +14,8 @@ class main():
         
         args.num_states = env.observation_space.shape[0]
         args.num_actions = env.action_space.shape[0]
+        args.env_name = env_name
+
         print(env.action_space)
         # Pring hyperparameters 
         print("---------------")
