@@ -37,7 +37,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser("Hyperparameters Setting for PPO")
     parser.add_argument("--evaluate_freq_steps", type=float, default=2e3, help="Evaluate the policy every N environment steps")
     parser.add_argument("--mini_batch_size", type=int, default=64, help="Mini-batch size used for PPO updates")
-    parser.add_argument("--max_train_steps", type=int, default=3e3, help="Total number of environment steps for training")
+    parser.add_argument("--max_train_steps", type=int, default=3e6, help="Total number of environment steps for training")
     parser.add_argument("--use_state_norm", type=bool, default=True, help="Whether to apply state normalization")
     parser.add_argument("--entropy_coef", type=float, default=0.00, help="Entropy bonus coefficient added to the actor loss")
     parser.add_argument("--batch_size", type=int, default=4096, help="Number of collected samples per update (batch size)")
