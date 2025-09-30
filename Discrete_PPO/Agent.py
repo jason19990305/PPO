@@ -1,11 +1,13 @@
 from Discrete_PPO.ReplayBuffer import ReplayBuffer
 from Discrete_PPO.ActorCritic import Actor,Critic
 from Discrete_PPO.Normalization import Normalization
+
 import numpy as np
 import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.distributions import Categorical
 import matplotlib.pyplot as plt
 import time
 
